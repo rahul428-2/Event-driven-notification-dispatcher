@@ -1,143 +1,375 @@
 # Event-Driven Notification Dispatcher
 
-An event-driven notification dispatcher API built with Express, better-sqlite3, and a native in-memory queue. It allows clients to submit events, persist them to a relational database, trigger corresponding notification tasks, and process them in the background using an asynchronous worker loop.
+A lightweight event-driven notification dispatcher built with **Node.js**, **Express.js**, and **SQLite**. The application accepts business events, stores them in a relational database, queues notification tasks, and processes them asynchronously using a native in-memory queue.
 
-## Project Overview
+---
 
-The service processes client events by validating payloads and immediately inserting event and pending notification records into SQLite. It places tasks onto a native in-memory array queue and responds immediately to the client with an HTTP 202 status code. An asynchronous loop processes queue items in the background, simulating notification dispatch delays and network failure rates, before updating the database.
+# Project Overview
 
-## Tech Stack
+This project demonstrates an event-driven architecture where API requests are acknowledged immediately while notification processing happens asynchronously in the background.
 
-- Runtime: Node.js
-- Framework: Express.js
-- Database: SQLite (better-sqlite3)
-- Queue: Native Javascript In-Memory Array Queue with Async Loop
+When a client submits an event:
 
-## Installation
+1. The request is validated.
+2. The event is stored in SQLite.
+3. A pending notification is created.
+4. The notification is pushed into an in-memory queue.
+5. The API immediately responds with **HTTP 202 Accepted**.
+6. A background worker processes the notification independently.
 
-1. Install package dependencies:
-   ```bash
-   npm install
-   ```
+This approach keeps API response times low while separating request handling from background processing.
 
-2. Create your environment configuration file:
-   ```bash
-   cp .env.example .env
-   ```
+---
 
-## Running the Project
+# Tech Stack
 
-### Development Mode (with Nodemon)
+- **Runtime:** Node.js
+- **Framework:** Express.js
+- **Database:** SQLite (`better-sqlite3`)
+- **Queue:** Native JavaScript In-Memory Queue
+- **Architecture:** Event-Driven Asynchronous Processing
+
+---
+
+# Project Structure
+
+```text
+project-root/
+│
+├── src/
+│   ├── app.js
+│   ├── server.js
+│   ├── controllers/
+│   │   └── eventController.js
+│   ├── services/
+│   │   ├── eventService.js
+│   │   ├── notificationService.js
+│   │   └── queueWorker.js
+│   ├── db/
+│   │   ├── database.js
+│   │   └── schema.sql
+│   └── routes/
+│       └── eventRoutes.js
+│
+├── architecture-diagram.png
+├── README.md
+├── package.json
+├── .env.example
+└── .gitignore
+```
+
+---
+
+# Installation
+
+Clone the repository.
+
+```bash
+git clone <repository-url>
+cd Event-driven-notification-dispatcher
+```
+
+Install dependencies.
+
+```bash
+npm install
+```
+
+Create an environment file.
+
+```bash
+cp .env.example .env
+```
+
+---
+
+# Environment Variables
+
+Example:
+
+```env
+PORT=3000
+DATABASE_PATH=data/notifications.db
+```
+
+---
+
+# Running the Application
+
+Development mode
+
 ```bash
 npm run dev
 ```
 
-### Production Mode
+Production mode
+
 ```bash
 npm start
 ```
 
-## SQLite Setup
+The application automatically:
 
-The project automatically initializes the SQLite database at start up. It creates the data directory (if it does not exist) and applies the database table structures defined in `src/db/schema.sql`.
-
-### Tables Layout
-
-#### events
-- `id`: INTEGER PRIMARY KEY AUTOINCREMENT
-- `event_type`: TEXT NOT NULL
-- `payload`: TEXT NOT NULL (JSON data)
-- `created_at`: DATETIME DEFAULT CURRENT_TIMESTAMP
-
-#### notifications
-- `id`: INTEGER PRIMARY KEY AUTOINCREMENT
-- `event_id`: INTEGER NOT NULL (References events.id)
-- `recipient`: TEXT NOT NULL
-- `channel`: TEXT NOT NULL
-- `status`: TEXT NOT NULL ('pending', 'completed', 'failed')
-- `retry_count`: INTEGER DEFAULT 0
-- `created_at`: DATETIME DEFAULT CURRENT_TIMESTAMP
-- `updated_at`: DATETIME DEFAULT CURRENT_TIMESTAMP
+- Creates the SQLite database.
+- Creates the required tables.
+- Starts the background queue worker.
+- Listens for incoming API requests.
 
 ---
 
-## API Documentation
+# Database Schema
 
-### Register Event
+## events
 
-- **URL**: `/api/v1/events`
-- **Method**: `POST`
-- **Headers**: `Content-Type: application/json`
+| Column | Type |
+|---------|------|
+| id | INTEGER PRIMARY KEY AUTOINCREMENT |
+| event_type | TEXT |
+| payload | TEXT |
+| created_at | DATETIME |
 
-#### Sample Request
+---
+
+## notifications
+
+| Column | Type |
+|---------|------|
+| id | INTEGER PRIMARY KEY AUTOINCREMENT |
+| event_id | INTEGER |
+| recipient | TEXT |
+| channel | TEXT |
+| status | pending / completed / failed |
+| retry_count | INTEGER |
+| created_at | DATETIME |
+| updated_at | DATETIME |
+
+The notification table maintains a foreign key relationship with the events table.
+
+---
+
+# API
+
+## POST /api/v1/events
+
+Registers a business event and queues a notification.
+
+### Request
+
+```http
+POST /api/v1/events
+Content-Type: application/json
+```
+
+### Request Body
 
 ```json
 {
-  "event_type": "order_placed",
-  "recipient": "user@example.com",
-  "data": {
-    "order_id": 101
+    "event_type":"order_placed",
+    "recipient":"user@example.com",
+    "data":{
+        "order_id":101
+    }
+}
+```
+
+---
+
+## Success Response
+
+HTTP Status
+
+```text
+202 Accepted
+```
+
+Body
+
+```json
+{
+    "message":"Event accepted for processing",
+    "tracking_id":1,
+    "notification_id":1,
+    "status":"pending"
+}
+```
+
+---
+
+## Validation Error
+
+HTTP Status
+
+```text
+400 Bad Request
+```
+
+```json
+{
+    "error":"event_type and recipient are required"
+}
+```
+
+---
+
+## Invalid JSON
+
+HTTP Status
+
+```text
+400 Bad Request
+```
+
+```json
+{
+    "error":"Invalid JSON payload"
+}
+```
+
+---
+
+## Internal Server Error
+
+HTTP Status
+
+```text
+500 Internal Server Error
+```
+
+```json
+{
+    "error":"Internal server error"
+}
+```
+
+---
+
+# Example Request
+
+```bash
+curl -X POST http://localhost:3000/api/v1/events \
+-H "Content-Type: application/json" \
+-d '{
+  "event_type":"order_placed",
+  "recipient":"user@example.com",
+  "data":{
+      "order_id":101
   }
-}
-```
-
-#### Sample Response (HTTP 202 Accepted)
-
-```json
-{
-  "message": "Event accepted for processing",
-  "tracking_id": 1,
-  "notification_id": 1,
-  "status": "pending"
-}
-```
-
-#### Validation Error (HTTP 400 Bad Request)
-
-Returned if either `event_type` or `recipient` is missing:
-
-```json
-{
-  "error": "event_type and recipient are required"
-}
-```
-
-#### Server Error (HTTP 500 Internal Server Error)
-
-Returned for unhandled runtime errors:
-
-```json
-{
-  "error": "Internal server error"
-}
+}'
 ```
 
 ---
 
-## Queue Explanation
+# Queue Processing
 
-The application implements a native asynchronous queue worker model:
-1. **Queue Store**: A standard JavaScript Array `this.queue = []` behaves as a First-In-First-Out (FIFO) collection.
-2. **Push Mechanism**: When a valid event is stored, a notification task object is created and appended to the array.
-3. **Continuous Background Worker**: When the server boots up, `queueWorker.start()` is executed. It runs a `while(true)` loop.
-4. **Worker Loop**:
-   - If the queue is non-empty, it shifts the first item out and starts processing.
-   - It performs a promise-based delay between 500ms and 1000ms.
-   - It rolls a random number. If the roll is less than 0.10 (10% chance), it throws an error and updates the status to `failed` and increments `retry_count`. Otherwise, it updates status to `completed`.
-   - If the queue is empty, the loop resolves a short setTimeout (100ms) to release the event loop before checking again.
+The application uses a native FIFO in-memory queue.
+
+Processing flow:
+
+```text
+Client
+      │
+      ▼
+POST /api/v1/events
+      │
+      ▼
+Validate Request
+      │
+      ▼
+Store Event
+      │
+      ▼
+Create Pending Notification
+      │
+      ▼
+Push Task Into Queue
+      │
+      ▼
+Return HTTP 202 Immediately
+──────────────────────────────────────
+Background Worker
+      │
+      ▼
+Random Delay (500–1000 ms)
+      │
+      ▼
+10% Failure Simulation
+      │
+      ▼
+Update Notification Status
+```
+
+The worker processes notifications independently of the HTTP request lifecycle.
 
 ---
 
-## Assumptions
+# Notification Processing
 
-1. The default channel for all generated notifications is `email`.
-2. The payload in the `events` table stores the custom nested `data` object sent inside the API request.
-3. The queue is fully in-memory, meaning tasks reside within the Node process memory footprint.
+Each queued notification:
+
+- waits for a random delay between **500 ms** and **1000 ms**
+- has a **10% simulated failure rate**
+- updates the notification status to:
+  - `completed`
+  - `failed`
+- increments `retry_count` when processing fails
 
 ---
 
-## Limitations
+# Error Handling
 
-1. **Memory Volatility**: Because the queue is held in a JavaScript memory array, any server restart, crash, or deployment will cause the pending items in the queue to be lost (though their status remains stored as `pending` in the SQLite database).
-2. **Single Instance Scaling**: An in-memory queue cannot be shared across multiple Node.js server instances.
-3. **No Auto-Retry Loop**: When a notification fails, the status is updated to `failed`, but the native worker does not automatically reschedule or push the item back to the queue for a retry unless manually triggered.
+The application gracefully handles:
+
+- Missing `event_type`
+- Missing `recipient`
+- Invalid JSON payloads
+- Database failures
+- Notification update failures
+- Queue processing failures
+- Unexpected server exceptions
+
+---
+
+# Assumptions
+
+- Notification channel is always `email`.
+- Notification sending is simulated.
+- Queue is intentionally implemented in memory.
+- One worker processes one notification at a time.
+
+---
+
+# Limitations
+
+- The queue exists only in memory.
+- Pending tasks are lost if the server stops before processing them.
+- The system is designed for a single application instance.
+- Failed notifications are marked as failed but are not automatically retried.
+
+---
+
+# Architecture
+
+The complete system architecture is available in:
+
+```
+architecture-diagram.png
+```
+
+---
+
+# Design Decisions
+
+This implementation intentionally uses:
+
+- Native JavaScript queue
+- SQLite
+- Express.js
+- Background worker loop
+
+No external queue systems (Redis, RabbitMQ, Kafka, BullMQ) are used, matching the assessment requirements.
+
+---
+
+# Author
+
+**Rahul**
